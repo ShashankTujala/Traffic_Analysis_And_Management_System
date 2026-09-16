@@ -1,0 +1,86 @@
+from inference_sdk import InferenceHTTPClient 
+import supervision as sv
+import cv2
+import os
+
+datasets = "datasets/helmet_dectect"
+output_img = "datasets/results"
+
+imgp = [g for g in os.listdir(datasets)if g.endswith((".jpg", ".png", ".jpeg"))]
+vids = [v for v in os.listdir(datasets) if v.endswith((".mp4", ".avi", ".mov"))]
+
+for vid_name in vids:
+    f_int = 15
+    cap = cv2.VideoCapture(os.path.join(datasets, vid_name))
+    f_count = 0
+    s_count = 0
+    base_name = os.path.splitext(vid_name)[0]
+    box_annotater = sv.BoxAnnotator()
+    label_annotater = sv.LabelAnnotator()
+    model = InferenceHTTPClient(api_url = "https://serverless.roboflow.com", api_key="EYGCBxOnNiYUUJ8IPmwo")
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
+        if f_count % f_int == 0:
+            results = model.infer(frame, model_id = "safety-helmet-rtki3/3")
+            detect = sv.Detections.from_inference(results)   
+            labels = [f"{class_name} {confidence:0.2f}" for confidence, class_name
+                    in zip(detect.confidence, detect.data["class_name"])]
+
+            vid_annoator = box_annotater.annotate(scene=frame.copy(), detections=detect)
+            vid_annoator = label_annotater.annotate(scene=vid_annoator, detections=detect, labels=labels)
+            cv2.imwrite(os.path.join(output_img, f"{base_name}_{s_count}.jpg"), vid_annoator)
+
+            h, w = frame.shape[:2]
+            label_lines = []
+            for i in range(len(detect)):
+                x1, y1, x2, y2 = detect.xyxy[i]
+                class_id = int(detect.class_id[i])
+                cx = ((x1 + x2) / 2) / w
+                cy = ((y1 + y2) / 2) / h
+                bw = (x2 - x1) / w
+                bh = (y2 - y1) / h
+    
+            s_count += 1
+        f_count += 1    
+    cap.release()
+        
+for img_name in imgp:
+    img = cv2.imread(os.path.join(datasets, img_name)) 
+    model = InferenceHTTPClient(api_url = "https://serverless.roboflow.com", api_key="EYGCBxOnNiYUUJ8IPmwo")
+
+    results = model.infer(img, model_id = "safety-helmet-rtki3/3", confidence=0.75)
+
+    detect = sv.Detections.from_inference(results[0])
+    labels = [f"{class_name} {confidence:0.2f}" for confidence, class_name
+            in zip(detect.confidence, detect.data["class_name"])]
+
+    h, w = img.shape[:2]
+    thickness = sv.calculate_optimal_line_thickness(resolution_wh = (w,h))
+    text_scacle = sv.calculate_optimal_text_scale(resolution_wh = (w,h))
+
+    box_annotator = sv.BoxAnnotator(thickness=thickness)
+    label_annotator = sv.LabelAnnotator(text_scale=text_scacle, text_thickness=thickness)
+
+    img_annotator = box_annotator.annotate(scene=img.copy(), detections=detect)
+    img_annotator = label_annotator.annotate(scene=img_annotator, detections=detect, labels=labels)
+    height, weight = img_annotator.shape[:2]
+
+    h, w = img_annotator.shape[:2]
+
+    max_w = 1200
+    max_h = 800
+
+    scale = min(max_w / w, max_h / h, 1)
+
+    display_img = cv2.resize(
+        img_annotator,
+        (int(w * scale), int(h * scale))
+    )
+
+    cv2.namedWindow("results", cv2.WINDOW_NORMAL)
+    cv2.imwrite(os.path.join(output_img, img_name), display_img)
+
+cv2.waitKey(0)
+cv2.destroyAllWindows() 
